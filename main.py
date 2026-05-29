@@ -9,7 +9,7 @@ import streamlit as st
 
 from colas import calcular_cola
 from nivelservicio import nivel_servicio
-from semaforo import calcular_ciclo_webster
+from webster import calcular_ciclo_webster
 
 
 def cargar_flujos_texto():

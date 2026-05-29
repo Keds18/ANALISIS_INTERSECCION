@@ -1,16 +1,36 @@
-# Aplicativo principal para análisis de tránsito con Streamlit
+# ==========================================
+# APP TRANSITO - VERSION 2
+# Dashboard de análisis operacional
+# ==========================================
+
 import csv
+import io
 from io import BytesIO
 from pathlib import Path
-import io
 
 import pandas as pd
 import streamlit as st
+import matplotlib.pyplot as plt
 
 from colas import calcular_cola
 from nivelservicio import nivel_servicio
 from webster import calcular_ciclo_webster
 
+
+# ------------------------------------------
+# CONFIG
+# ------------------------------------------
+
+st.set_page_config(
+    page_title="TRANSITO 🚦",
+    page_icon="🚦",
+    layout="wide"
+)
+
+
+# ------------------------------------------
+# FUNCIONES AUXILIARES
+# ------------------------------------------
 
 def cargar_flujos_texto():
     ruta = Path(__file__).with_name("flujos.txt")
@@ -22,241 +42,346 @@ def cargar_flujos_texto():
 def parse_literal(valor):
     if valor is None:
         return None
+
     valor = str(valor).strip()
+
     if valor == "":
         return None
-    if valor.lower() in {"none", "na", "nan"}:
-        return None
+
     try:
         if "." in valor:
             return float(valor)
         return int(valor)
+
     except ValueError:
-        try:
-            return float(valor)
-        except ValueError:
-            return valor
+        return valor
 
 
 def cargar_escenarios_flujos(texto):
+
     texto = texto.strip()
+
     if not texto:
         return []
 
-    lineas = [linea for linea in texto.splitlines() if linea.strip() and not linea.strip().startswith("#")]
+    lineas = [
+        linea for linea in texto.splitlines()
+        if linea.strip()
+        and not linea.startswith("#")
+    ]
+
     if not lineas:
         return []
 
-    if "," in lineas[0]:
-        lector = csv.DictReader(io.StringIO("\n".join(lineas)))
-        escenarios = []
-        for fila in lector:
-            if not any(fila.values()):
-                continue
-            escenario = {}
-            for clave, valor in fila.items():
-                if clave is None:
-                    continue
-                nombre = clave.strip()
-                escenario[nombre] = parse_literal(valor)
-            escenario["name"] = escenario.get("scenario") or escenario.get("name") or f"escenario_{len(escenarios)+1}"
-            escenarios.append(escenario)
-        return escenarios
+    lector = csv.DictReader(io.StringIO("\n".join(lineas)))
 
-    # Formato clave=valor simple
-    escenario = {}
-    for linea in lineas:
-        if "=" in linea:
-            clave, valor = linea.split("=", 1)
-            escenario[clave.strip()] = parse_literal(valor)
-    if escenario:
-        escenario["name"] = escenario.get("scenario") or escenario.get("name") or "default"
-        return [escenario]
-    return []
+    escenarios = []
 
+    for fila in lector:
 
-def main():
-    st.set_page_config(page_title="App de Tránsito", page_icon="🚦", layout="wide")
-    st.title("Análisis de Tránsito Integrado")
-    st.write(
-        "Esta aplicación combina cálculo de ciclo semafórico, teoría de colas M/M/1 y nivel de servicio."
-    )
-
-    with st.expander("Información teórica"):
-        st.markdown(
-            """
-            **Modelo M/M/1 (Teoría de colas)**
-
-            - Llegadas: proceso de Poisson (tasa λ).
-            - Servicio: tiempo de servicio exponencial (tasa μ).
-            - Sistema de un único servidor.
-            - Métricas útiles: utilización ρ = λ/μ, Lq (vehículos en cola), Wq (tiempo en cola).
-
-            **Método de Webster (cálculo de ciclo semafórico)**
-
-            - Calcula el ciclo óptimo C en segundos con base en la relación crítica Y y el tiempo perdido L:
-              $$C = \\frac{1.5L + 5}{1 - Y}$$
-            - Y es la suma de las fracciones de flujo por carril; si $Y \\ge 1$ el sistema no es estable.
-
-            Estas fórmulas son aproximaciones usadas en diseño preliminar de control semafórico y análisis de servicio.
-            """
-        )
-
-    texto_flujos = cargar_flujos_texto()
-    escenarios = cargar_escenarios_flujos(texto_flujos)
-
-    with st.expander("Ver contenido de flujos.txt"):
-        if texto_flujos:
-            st.code(texto_flujos, language="text")
-        else:
-            st.write("No se encontró `flujos.txt`. Puedes crearlo en la carpeta del proyecto con formato CSV o clave=valor.")
-
-    if escenarios:
-        nombres = [escenario["name"] for escenario in escenarios]
-        seleccion = st.selectbox("Escenario cargado desde flujos.txt", nombres)
-        escenario = next(esc for esc in escenarios if esc["name"] == seleccion)
-        if escenario.get("notes"):
-            st.caption(f"Notas: {escenario['notes']}")
-    else:
         escenario = {}
 
-    st.markdown("---")
+        for clave, valor in fila.items():
+            escenario[clave.strip()] = parse_literal(valor)
 
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.header("Semáforo - Método de Webster")
-        q_norte = st.number_input(
-            "Flujo Norte (veh/h)",
-            min_value=0.0,
-            value=float(escenario.get("q_norte", 450.0)),
-            step=10.0,
-        )
-        q_sur = st.number_input(
-            "Flujo Sur (veh/h)",
-            min_value=0.0,
-            value=float(escenario.get("q_sur", 400.0)),
-            step=10.0,
-        )
-        q_este = st.number_input(
-            "Flujo Este (veh/h)",
-            min_value=0.0,
-            value=float(escenario.get("q_este", 350.0)),
-            step=10.0,
-        )
-        q_oeste = st.number_input(
-            "Flujo Oeste (veh/h)",
-            min_value=0.0,
-            value=float(escenario.get("q_oeste", 300.0)),
-            step=10.0,
-        )
-        s = st.number_input(
-            "Saturación por carril (veh/h)",
-            min_value=100.0,
-            value=float(escenario.get("s", 1300.0)),
-            step=50.0,
-        )
-        L = st.number_input(
-            "Tiempo perdido total L (segundos)",
-            min_value=0.0,
-            value=float(escenario.get("L", 12.0)),
-            step=1.0,
+        escenario["name"] = escenario.get(
+            "scenario",
+            f"Escenario {len(escenarios)+1}"
         )
 
-        if st.button("Calcular ciclo semafórico", key="btn_semaforo"):
-            resultado = calcular_ciclo_webster(q_norte, q_sur, q_este, q_oeste, s=s, L=L)
-            if "error" in resultado:
-                st.error(resultado["error"])
-            else:
-                st.metric("Relación crítica total Y", resultado["Y"])
-                st.metric("Ciclo semafórico C (s)", resultado["C"])
-                st.write("### Tiempos de verde efectivos")
-                st.write(
-                    {
-                        "Norte": f"{resultado['verde']['norte']} s",
-                        "Sur": f"{resultado['verde']['sur']} s",
-                        "Este": f"{resultado['verde']['este']} s",
-                        "Oeste": f"{resultado['verde']['oeste']} s",
-                    }
-                )
+        escenarios.append(escenario)
 
-    with col2:
-        st.header("Teoría de Colas M/M/1")
-        lambda_llegadas = st.number_input(
-            "Llegadas λ (veh/h)",
-            min_value=0.0,
-            value=float(escenario.get("lambda", 300.0)),
-            step=10.0,
-        )
-        mu_servicio = st.number_input(
-            "Servicio μ (veh/h)",
-            min_value=1.0,
-            value=float(escenario.get("mu", 500.0)),
-            step=10.0,
-        )
+    return escenarios
 
-        if st.button("Calcular cola", key="btn_colas"):
-            resultado = calcular_cola(lambda_llegadas, mu_servicio)
-            if "error" in resultado:
-                st.error(resultado["error"])
-            else:
-                st.write("### Resultados de la cola")
-                st.write(f"Utilización (ρ): {resultado['rho']}")
-                st.write(f"Vehículos promedio en cola (Lq): {resultado['Lq']}")
-                st.write(f"Tiempo promedio en cola (Wq): {resultado['Wq']:.4f} horas")
-                demora_min = round(resultado['Wq'] * 60, 2)
-                st.write(f"Tiempo en cola en minutos: {demora_min} min")
-                st.write(f"Nivel de servicio: {nivel_servicio(demora_min)}")
 
-    st.markdown("---")
-    st.header("Exportar escenario actual")
+# ------------------------------------------
+# SESSION STATE
+# ------------------------------------------
 
-    df_export = pd.DataFrame(
-        [
-            {"Campo": "q_norte", "Valor": q_norte},
-            {"Campo": "q_sur", "Valor": q_sur},
-            {"Campo": "q_este", "Valor": q_este},
-            {"Campo": "q_oeste", "Valor": q_oeste},
-            {"Campo": "s", "Valor": s},
-            {"Campo": "L", "Valor": L},
-            {"Campo": "lambda", "Valor": lambda_llegadas},
-            {"Campo": "mu", "Valor": mu_servicio},
-        ]
+if "resultado_webster" not in st.session_state:
+    st.session_state.resultado_webster = None
+
+if "resultado_cola" not in st.session_state:
+    st.session_state.resultado_cola = None
+
+
+# ------------------------------------------
+# TITULO
+# ------------------------------------------
+
+st.title("🚦 Sistema Integrado de Análisis de Tránsito")
+st.caption(
+    "Método de Webster + Teoría de Colas + Nivel de Servicio"
+)
+
+
+# ------------------------------------------
+# CARGA DE ESCENARIOS
+# ------------------------------------------
+
+texto_flujos = cargar_flujos_texto()
+escenarios = cargar_escenarios_flujos(texto_flujos)
+
+escenario = {}
+
+if escenarios:
+
+    nombres = [e["name"] for e in escenarios]
+
+    seleccion = st.selectbox(
+        "Seleccionar escenario:",
+        nombres
     )
 
-    csv_bytes = df_export.to_csv(index=False).encode("utf-8")
+    escenario = next(
+        e for e in escenarios
+        if e["name"] == seleccion
+    )
+
+
+# ------------------------------------------
+# SIDEBAR
+# ------------------------------------------
+
+with st.sidebar:
+
+    st.header("⚙ Parámetros de entrada")
+
+    st.subheader("Flujos")
+
+    q_norte = st.number_input(
+        "Norte",
+        value=float(escenario.get("q_norte", 450))
+    )
+
+    q_sur = st.number_input(
+        "Sur",
+        value=float(escenario.get("q_sur", 400))
+    )
+
+    q_este = st.number_input(
+        "Este",
+        value=float(escenario.get("q_este", 350))
+    )
+
+    q_oeste = st.number_input(
+        "Oeste",
+        value=float(escenario.get("q_oeste", 300))
+    )
+
+    st.subheader("Semaforización")
+
+    s = st.number_input(
+        "Saturación s (veh/h)",
+        value=float(escenario.get("s", 1800))
+    )
+
+    L = st.number_input(
+        "Tiempo perdido L (s)",
+        value=float(escenario.get("L", 12))
+    )
+
+    st.subheader("Colas")
+
+    lambda_llegadas = st.number_input(
+        "λ llegadas",
+        value=float(escenario.get("lambda", 300))
+    )
+
+    mu_servicio = st.number_input(
+        "μ servicio",
+        value=float(escenario.get("mu", 500))
+    )
+
+
+# ------------------------------------------
+# BOTONES
+# ------------------------------------------
+
+col_btn1, col_btn2 = st.columns(2)
+
+with col_btn1:
+    if st.button("🚦 Calcular Webster"):
+        st.session_state.resultado_webster = calcular_ciclo_webster(
+            q_norte,
+            q_sur,
+            q_este,
+            q_oeste,
+            s=s,
+            L=L
+        )
+
+with col_btn2:
+    if st.button("🚗 Calcular Cola"):
+        st.session_state.resultado_cola = calcular_cola(
+            lambda_llegadas,
+            mu_servicio
+        )
+
+
+# ------------------------------------------
+# TABS
+# ------------------------------------------
+
+tab1, tab2, tab3, tab4 = st.tabs([
+    "🚦 Webster",
+    "🚗 Colas",
+    "📊 Dashboard",
+    "📁 Exportar"
+])
+
+
+# ==========================================
+# TAB 1 WEBSTER
+# ==========================================
+
+with tab1:
+
+    resultado = st.session_state.resultado_webster
+
+    if resultado and "error" not in resultado:
+
+        st.subheader("Resultados del Método de Webster")
+
+        c1, c2 = st.columns(2)
+
+        with c1:
+            st.metric(
+                "Relación crítica Y",
+                round(resultado["Y"], 3)
+            )
+
+        with c2:
+            st.metric(
+                "Ciclo óptimo",
+                f"{round(resultado['C'],1)} s"
+            )
+
+        st.write("### Verdes efectivos")
+
+        st.dataframe(
+            pd.DataFrame(
+                resultado["verde"].items(),
+                columns=["Acceso", "Verde (s)"]
+            )
+        )
+
+
+# ==========================================
+# TAB 2 COLAS
+# ==========================================
+
+with tab2:
+
+    resultado = st.session_state.resultado_cola
+
+    if resultado and "error" not in resultado:
+
+        demora_min = resultado["Wq"] * 60
+        longitud_cola = resultado["Lq"] * 6.5
+
+        c1, c2, c3, c4 = st.columns(4)
+
+        c1.metric("ρ", round(resultado["rho"], 3))
+        c2.metric("Lq", round(resultado["Lq"], 2))
+        c3.metric("Demora", f"{demora_min:.2f} min")
+        c4.metric("Cola estimada", f"{longitud_cola:.1f} m")
+
+        st.success(
+            f"Nivel de servicio: {nivel_servicio(demora_min)}"
+        )
+
+
+# ==========================================
+# TAB 3 DASHBOARD
+# ==========================================
+
+with tab3:
+
+    st.subheader("Dashboard de Flujos")
+
+    df_flujos = pd.DataFrame({
+        "Acceso": ["Norte", "Sur", "Este", "Oeste"],
+        "Flujo": [
+            q_norte,
+            q_sur,
+            q_este,
+            q_oeste
+        ]
+    })
+
+    st.bar_chart(
+        df_flujos.set_index("Acceso")
+    )
+
+    st.subheader("Relación v/c")
+
+    df_vc = pd.DataFrame({
+        "Acceso": ["Norte", "Sur", "Este", "Oeste"],
+        "v/c": [
+            q_norte/s,
+            q_sur/s,
+            q_este/s,
+            q_oeste/s
+        ]
+    })
+
+    st.dataframe(df_vc)
+
+    fig, ax = plt.subplots()
+
+    ax.pie(
+        df_flujos["Flujo"],
+        labels=df_flujos["Acceso"],
+        autopct="%1.1f%%"
+    )
+
+    st.pyplot(fig)
+
+
+# ==========================================
+# TAB 4 EXPORTAR
+# ==========================================
+
+with tab4:
+
+    st.subheader("Exportación")
+
+    df_export = pd.DataFrame([
+        {"Campo": "q_norte", "Valor": q_norte},
+        {"Campo": "q_sur", "Valor": q_sur},
+        {"Campo": "q_este", "Valor": q_este},
+        {"Campo": "q_oeste", "Valor": q_oeste},
+        {"Campo": "s", "Valor": s},
+        {"Campo": "L", "Valor": L},
+        {"Campo": "lambda", "Valor": lambda_llegadas},
+        {"Campo": "mu", "Valor": mu_servicio},
+    ])
+
+    csv_bytes = df_export.to_csv(
+        index=False
+    ).encode("utf-8")
+
     st.download_button(
-        "Descargar CSV para Excel",
-        data=csv_bytes,
-        file_name="escenario_transito.csv",
-        mime="text/csv",
+        "Descargar CSV",
+        csv_bytes,
+        file_name="escenario_transito.csv"
     )
 
     output = BytesIO()
-    try:
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            df_export.to_excel(writer, index=False, sheet_name="escenario")
 
-        output.seek(0)
-        st.download_button(
-            "Descargar Excel",
-            data=output.getvalue(),
-            file_name="escenario_transito.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    with pd.ExcelWriter(
+        output,
+        engine="openpyxl"
+    ) as writer:
+
+        df_export.to_excel(
+            writer,
+            index=False
         )
-    except ImportError:
-        st.warning("Para descargar Excel, instala la dependencia openpyxl: pip install openpyxl")
-    except Exception as e:
-        st.error(f"Error al generar el archivo Excel: {e}")
-    st.markdown("---")
-    st.header("Nivel de servicio por demora")
-    demora = st.number_input("Demora en minutos", min_value=0.0, value=15.0, step=1.0)
-    st.write(f"Categoría de nivel de servicio: {nivel_servicio(demora)}")
 
-    st.markdown(
-        "---\n" "**Instrucciones:** Ejecuta `streamlit run main.py` en la carpeta del proyecto para abrir la app." 
+    st.download_button(
+        "Descargar Excel",
+        output.getvalue(),
+        file_name="escenario_transito.xlsx"
     )
-
-
-if __name__ == "__main__":
-    main()

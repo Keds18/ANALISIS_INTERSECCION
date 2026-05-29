@@ -1,0 +1,27 @@
+# entorno virtual
+envtransito/
+
+# cache python
+__pycache__/
+*.pyc
+
+# jupyter
+.ipynb_checkpoints/
+
+# vscode
+.vscode/
+
+# archivos temporales
+*.log
+*.tmp
+
+# variables sensibles
+.env
+
+# sistema
+.DS_Store
+Thumbs.db
+
+# build
+dist/
+build/

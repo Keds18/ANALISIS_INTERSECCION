@@ -194,3 +194,4 @@ if __name__ == "__main__":
             for adv in resultado.advertencias:
                 print(f"    · {adv}")
         print("=" * 45)
+        

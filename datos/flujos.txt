@@ -1,0 +1,5 @@
+# Ejemplo de escenarios para flujos de tránsito
+# Puedes editarlo con Excel si lo abres como texto delimitado por comas.
+scenario,q_norte,q_sur,q_este,q_oeste,s,L,lambda,mu,notes
+base,450,400,350,300,1300,12,300,500,Escenario base
+pico,600,550,500,450,1300,12,480,600,Horario pico

@@ -1,9 +1,12 @@
 # entorno virtual
 envtransito/
 
-# cache python
+# Cache Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
 
 # jupyter
 .ipynb_checkpoints/
@@ -14,14 +17,21 @@ __pycache__/
 # archivos temporales
 *.log
 *.tmp
+*.bak
 
 # variables sensibles
 .env
+secrets.toml
 
-# sistema
+# Streamlit local
+.streamlit/secrets.toml
+
+# Sistema operativo
 .DS_Store
-Thumbs.db
+Thumbbs.db
 
-# build
+
+# Build / dist
 dist/
 build/
+*.egg-info/

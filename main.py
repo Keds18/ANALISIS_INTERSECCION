@@ -15,6 +15,7 @@
 
 import csv
 import io
+import importlib.util
 from io import BytesIO
 from pathlib import Path
 
@@ -24,8 +25,16 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from colas import calcular_cola
-from nivelservicio import nivel_servicio_desde_minutos
 from webster import calcular_ciclo_webster
+
+# Cargar el módulo local nivelservicio.py desde la misma carpeta que este script.
+# Esto evita conflictos si existe otro paquete `nivelservicio` en el entorno.
+_nivelservicio_path = Path(__file__).with_name("nivelservicio.py")
+_spec = importlib.util.spec_from_file_location("nivelservicio_local", _nivelservicio_path)
+if _spec is None or _spec.loader is None:
+    raise ImportError(f"No se pudo cargar el módulo local nivelservicio desde {_nivelservicio_path}")
+nivelservicio = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(nivelservicio)
 
 
 # ------------------------------------------
@@ -33,7 +42,7 @@ from webster import calcular_ciclo_webster
 # ------------------------------------------
 
 st.set_page_config(
-    page_title="TRÁNSITO v3 · Av. Huancavelica",
+    page_title="Analisis de Tránsito de una interseccion semaforizada de 1 carril por acceso",
     page_icon="🚦",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -118,6 +127,21 @@ def kpi_card(label: str, value: str, unit: str = "", color: str = "#4f8ef7"):
     )
 
 
+def obtener_atributo(resultado, nombre, valor_predeterminado=None):
+    """Retorna un atributo de resultado que puede ser dict o un objeto."""
+    if resultado is None:
+        return valor_predeterminado
+    if isinstance(resultado, dict):
+        if nombre == "es_valido":
+            return resultado.get("error") is None
+        if nombre == "demora_minutos":
+            return resultado.get("demora_minutos", resultado.get("Wq", 0) * 60)
+        if nombre == "longitud_cola_metros":
+            return resultado.get("longitud_cola_metros", resultado.get("Lq", 0) * 6.5)
+        return resultado.get(nombre, valor_predeterminado)
+    return getattr(resultado, nombre, valor_predeterminado)
+
+
 # ------------------------------------------
 # SESSION STATE
 # ------------------------------------------
@@ -163,7 +187,7 @@ if escenarios:
 
 with st.sidebar:
     st.header("⚙️ Parámetros de entrada")
-    st.caption("Av. Huancavelica — Huancayo, Perú")
+    st.caption("Intersección semaforizada con 1 carril por acceso · Análisis de desempeño")
 
     # ── Flujos vehiculares ──────────────────
     st.subheader("Flujos por acceso (veh/h)")
@@ -177,7 +201,7 @@ with st.sidebar:
     s = st.number_input(
         "Flujo de saturación s (veh/h)",
         value=float(escenario.get("s", 1800)),
-        min_value=600.0, max_value=2200.0, step=50.0,
+        min_value=500.0, max_value=2400.0, step=50.0,
         help="Valor típico HCM: 1800 veh/h por carril."
     )
     L = st.number_input(
@@ -196,7 +220,7 @@ with st.sidebar:
     )
     mu_servicio = st.number_input(
         "μ — Tasa de servicio (veh/h)",
-        value=float(escenario.get("mu", 500)),
+        value=float(escenario.get("mu", 800)),
         min_value=1.0, step=10.0,
     )
 
@@ -243,22 +267,22 @@ with tab1:
 
     if res_w is None:
         st.info("Presione **🚦 Calcular Webster** o **⚡ Calcular todo** en la barra lateral.")
-    elif not res_w.es_valido:
-        st.error(f"❌ {res_w.error}")
+    elif not obtener_atributo(res_w, "es_valido", False):
+        st.error(f"❌ {obtener_atributo(res_w, 'error', 'Error desconocido en cálculo de Webster.')}")
     else:
         # Advertencias
-        for adv in res_w.advertencias:
+        for adv in obtener_atributo(res_w, "advertencias", []):
             st.warning(adv)
 
         # KPIs principales
         col1, col2, col3 = st.columns(3)
         with col1:
-            kpi_card("Relación crítica Y", f"{res_w.Y:.3f}", color="#f7a44f")
+            kpi_card("Relación crítica Y", f"{obtener_atributo(res_w, 'Y', 0):.3f}", color="#f7a44f")
         with col2:
-            estado_y = "✅ Estable" if res_w.Y < 0.85 else "⚠ Carga alta"
+            estado_y = "✅ Estable" if obtener_atributo(res_w, 'Y', 0) < 0.90 else "⚠ Carga alta"
             kpi_card("Estado de la intersección", estado_y, color="#4fcef7")
         with col3:
-            kpi_card("Ciclo óptimo C", f"{res_w.C:.1f}", "s", color="#4ff79e")
+            kpi_card("Ciclo óptimo C", f"{obtener_atributo(res_w, 'C', 0):.1f}", "s", color="#4ff79e")
 
         st.divider()
 
@@ -266,8 +290,8 @@ with tab1:
         st.markdown("#### Verdes efectivos por acceso")
         df_v = pd.DataFrame(
             [{"Acceso": acc.capitalize(), "Verde efectivo (s)": g,
-              "% del ciclo efectivo": round(g / (res_w.C - L) * 100, 1) if (res_w.C - L) > 0 else 0}
-             for acc, g in res_w.verde.items()]
+              "% del ciclo efectivo": round(g / (obtener_atributo(res_w, 'C', 0) - L) * 100, 1) if (obtener_atributo(res_w, 'C', 0) - L) > 0 else 0}
+             for acc, g in obtener_atributo(res_w, 'verde', {}).items()]
         )
         st.dataframe(df_v, use_container_width=True, hide_index=True)
 
@@ -284,8 +308,8 @@ with tab1:
         st.plotly_chart(fig_v, use_container_width=True)
 
         # Diagrama de torta del ciclo
-        labels_ciclo = list(res_w.verde.keys()) + ["Tiempo perdido L"]
-        values_ciclo = list(res_w.verde.values()) + [L]
+        labels_ciclo = list(obtener_atributo(res_w, 'verde', {}).keys()) + ["Tiempo perdido L"]
+        values_ciclo = list(obtener_atributo(res_w, 'verde', {}).values()) + [L]
         fig_pie = go.Figure(data=[go.Pie(
             labels=[l.capitalize() for l in labels_ciclo],
             values=values_ciclo,
@@ -311,20 +335,20 @@ with tab2:
 
     if res_c is None:
         st.info("Presione **🚗 Calcular Cola M/M/1** o **⚡ Calcular todo** en la barra lateral.")
-    elif not res_c.es_valido:
-        st.error(f"❌ {res_c.error}")
+    elif not obtener_atributo(res_c, "es_valido", False):
+        st.error(f"❌ {obtener_atributo(res_c, 'error', 'Error desconocido en cálculo de cola.')}")
     else:
-        for adv in res_c.advertencias:
+        for adv in obtener_atributo(res_c, "advertencias", []):
             st.warning(adv)
 
-        demora_min     = res_c.demora_minutos
-        longitud_m     = res_c.longitud_cola_metros
-        los_resultado  = nivel_servicio_desde_minutos(demora_min)
+        demora_min     = obtener_atributo(res_c, "demora_minutos", 0)
+        longitud_m     = obtener_atributo(res_c, "longitud_cola_metros", 0)
+        los_resultado  = nivelservicio.nivel_servicio_desde_minutos(demora_min)
 
         # KPIs
         c1, c2, c3, c4, c5 = st.columns(5)
-        with c1: kpi_card("Utilización ρ", f"{res_c.rho:.3f}", color="#f7a44f")
-        with c2: kpi_card("Veh. en cola Lq", f"{res_c.Lq:.2f}", "veh", color="#4fcef7")
+        with c1: kpi_card("Utilización ρ", f"{obtener_atributo(res_c, 'rho', 0):.3f}", color="#f7a44f")
+        with c2: kpi_card("Veh. en cola Lq", f"{obtener_atributo(res_c, 'Lq', 0):.2f}", "veh", color="#4fcef7")
         with c3: kpi_card("Demora Wq", f"{demora_min:.2f}", "min", color="#a44ff7")
         with c4: kpi_card("Cola estimada", f"{longitud_m:.1f}", "m", color="#f74f4f")
         with c5: kpi_card("LOS", los_resultado.los, los_resultado.descripcion[:18], color=los_resultado.color_hex)
@@ -345,8 +369,8 @@ with tab2:
             markers=True,
         )
         fig_sens.add_vline(
-            x=res_c.rho, line_dash="dash", line_color="red",
-            annotation_text=f"ρ actual = {res_c.rho:.3f}",
+            x=obtener_atributo(res_c, 'rho', 0), line_dash="dash", line_color="red",
+            annotation_text=f"ρ actual = {obtener_atributo(res_c, 'rho', 0):.3f}",
         )
         fig_sens.update_layout(plot_bgcolor="rgba(0,0,0,0)")
         st.plotly_chart(fig_sens, use_container_width=True)
@@ -358,7 +382,7 @@ with tab2:
 
 with tab3:
     st.subheader("Dashboard de Flujos Vehiculares")
-    st.caption("Av. Huancavelica — Distribución por acceso")
+    st.caption("Interseccion semafoizada - Distribución por acceso")
 
     # ── Flujos por acceso ───────────────────
     df_flujos = pd.DataFrame({
@@ -407,8 +431,8 @@ with tab3:
         title="Relación v/c por acceso (0 = libre · 1 = capacidad)",
         text_auto=".3f",
     )
-    fig_vc.add_hline(y=0.85, line_dash="dash", line_color="orange",
-                     annotation_text="Umbral crítico (v/c = 0.85)")
+    fig_vc.add_hline(y=0.90, line_dash="dash", line_color="orange",
+                     annotation_text="Umbral crítico (v/c = 0.90)")
     fig_vc.add_hline(y=1.00, line_dash="dash", line_color="red",
                      annotation_text="Capacidad máxima (v/c = 1.00)")
     fig_vc.update_layout(plot_bgcolor="rgba(0,0,0,0)")
@@ -439,12 +463,12 @@ with tab4:
 
     # ── Resultados Webster ──────────────────
     res_w = st.session_state.resultado_webster
-    if res_w and res_w.es_valido:
+    if res_w and obtener_atributo(res_w, "es_valido", False):
         filas_w = [
-            {"Indicador": "Relación crítica Y",    "Valor": res_w.Y},
-            {"Indicador": "Ciclo óptimo C (s)",    "Valor": res_w.C},
+            {"Indicador": "Relación crítica Y",    "Valor": obtener_atributo(res_w, 'Y', 0)},
+            {"Indicador": "Ciclo óptimo C (s)",    "Valor": obtener_atributo(res_w, 'C', 0)},
         ]
-        for acc, g in res_w.verde.items():
+        for acc, g in obtener_atributo(res_w, 'verde', {}).items():
             filas_w.append({"Indicador": f"Verde {acc.capitalize()} (s)", "Valor": g})
         df_webster = pd.DataFrame(filas_w)
     else:
@@ -452,13 +476,13 @@ with tab4:
 
     # ── Resultados Cola ─────────────────────
     res_c = st.session_state.resultado_cola
-    if res_c and res_c.es_valido:
-        los_r = nivel_servicio_desde_minutos(res_c.demora_minutos)
+    if res_c and obtener_atributo(res_c, "es_valido", False):
+        los_r = nivelservicio.nivel_servicio_desde_minutos(obtener_atributo(res_c, 'demora_minutos', 0))
         df_cola = pd.DataFrame([
-            {"Indicador": "Utilización ρ",          "Valor": res_c.rho},
-            {"Indicador": "Veh. en cola Lq",        "Valor": res_c.Lq},
-            {"Indicador": "Demora Wq (min)",         "Valor": round(res_c.demora_minutos, 3)},
-            {"Indicador": "Cola estimada (m)",       "Valor": round(res_c.longitud_cola_metros, 1)},
+            {"Indicador": "Utilización ρ",          "Valor": obtener_atributo(res_c, 'rho', 0)},
+            {"Indicador": "Veh. en cola Lq",        "Valor": obtener_atributo(res_c, 'Lq', 0)},
+            {"Indicador": "Demora Wq (min)",         "Valor": round(obtener_atributo(res_c, 'demora_minutos', 0), 3)},
+            {"Indicador": "Cola estimada (m)",       "Valor": round(obtener_atributo(res_c, 'longitud_cola_metros', 0), 1)},
             {"Indicador": "Nivel de Servicio (LOS)", "Valor": los_r.los},
         ])
     else:

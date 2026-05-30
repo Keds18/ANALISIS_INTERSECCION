@@ -1,6 +1,16 @@
 # ==========================================
-# APP TRANSITO - VERSION 2
-# Dashboard de análisis operacional
+# TRANSITO v3 — Dashboard de Análisis
+# Operacional de Intersecciones
+# Av. Huancavelica — Huancayo, Perú
+#
+# Mejoras v3:
+# · Módulos tipados con dataclasses
+# · Validaciones robustas con advertencias
+# · Parámetro s=1800 veh/h (HCM estándar)
+# · Gráficos Plotly interactivos
+# · Exportación a CSV y Excel multisheet
+# · Soporte para flujos.txt (CSV externo)
+# · Indicadores LOS con color dinámico
 # ==========================================
 
 import csv
@@ -9,22 +19,43 @@ from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
-import matplotlib.pyplot as plt
 
 from colas import calcular_cola
-from nivelservicio import nivel_servicio
+from nivelservicio import nivel_servicio_desde_minutos
 from webster import calcular_ciclo_webster
 
 
 # ------------------------------------------
-# CONFIG
+# CONFIG DE PÁGINA
 # ------------------------------------------
 
 st.set_page_config(
-    page_title="TRANSITO 🚦",
+    page_title="TRÁNSITO v3 · Av. Huancavelica",
     page_icon="🚦",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# CSS mínimo para KPI cards
+st.markdown(
+    """
+    <style>
+    .kpi-card {
+        background: #1e2130;
+        border-radius: 10px;
+        padding: 1rem 1.2rem;
+        margin-bottom: 0.5rem;
+        border-left: 4px solid #4f8ef7;
+    }
+    .kpi-label { color: #aab0c2; font-size: 0.78rem; text-transform: uppercase; letter-spacing: .06em; }
+    .kpi-value { color: #e8ecf4; font-size: 1.6rem; font-weight: 700; }
+    .kpi-unit  { color: #7b82a0; font-size: 0.78rem; margin-left: 4px; }
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 
 
@@ -32,87 +63,83 @@ st.set_page_config(
 # FUNCIONES AUXILIARES
 # ------------------------------------------
 
-def cargar_flujos_texto():
+def cargar_flujos_texto() -> str:
+    """Lee el archivo flujos.txt si existe en el mismo directorio."""
     ruta = Path(__file__).with_name("flujos.txt")
-    if ruta.exists():
-        return ruta.read_text(encoding="utf-8")
-    return ""
+    return ruta.read_text(encoding="utf-8") if ruta.exists() else ""
 
 
 def parse_literal(valor):
+    """Convierte cadenas a int, float o None de forma segura."""
     if valor is None:
         return None
-
     valor = str(valor).strip()
-
-    if valor == "":
+    if not valor:
         return None
-
     try:
-        if "." in valor:
-            return float(valor)
-        return int(valor)
-
+        return float(valor) if "." in valor else int(valor)
     except ValueError:
         return valor
 
 
-def cargar_escenarios_flujos(texto):
-
+def cargar_escenarios_flujos(texto: str) -> list[dict]:
+    """Parsea el contenido CSV de flujos.txt en una lista de escenarios."""
     texto = texto.strip()
-
     if not texto:
         return []
-
     lineas = [
-        linea for linea in texto.splitlines()
-        if linea.strip()
-        and not linea.startswith("#")
+        l for l in texto.splitlines()
+        if l.strip() and not l.startswith("#")
     ]
-
     if not lineas:
         return []
-
     lector = csv.DictReader(io.StringIO("\n".join(lineas)))
-
     escenarios = []
-
-    for fila in lector:
-
-        escenario = {}
-
-        for clave, valor in fila.items():
-            escenario[clave.strip()] = parse_literal(valor)
-
-        escenario["name"] = escenario.get(
-            "scenario",
-            f"Escenario {len(escenarios)+1}"
-        )
-
-        escenarios.append(escenario)
-
+    for idx, fila in enumerate(lector, start=1):
+        esc = {k.strip(): parse_literal(v) for k, v in fila.items()}
+        esc["name"] = esc.get("scenario", f"Escenario {idx}")
+        escenarios.append(esc)
     return escenarios
+
+
+def kpi_card(label: str, value: str, unit: str = "", color: str = "#4f8ef7"):
+    """Renderiza una tarjeta KPI con HTML."""
+    st.markdown(
+        f"""
+        <div class="kpi-card" style="border-left-color:{color}">
+          <div class="kpi-label">{label}</div>
+          <div>
+            <span class="kpi-value">{value}</span>
+            <span class="kpi-unit">{unit}</span>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 # ------------------------------------------
 # SESSION STATE
 # ------------------------------------------
 
-if "resultado_webster" not in st.session_state:
-    st.session_state.resultado_webster = None
-
-if "resultado_cola" not in st.session_state:
-    st.session_state.resultado_cola = None
+defaults = {
+    "resultado_webster": None,
+    "resultado_cola": None,
+}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
 
 # ------------------------------------------
-# TITULO
+# ENCABEZADO
 # ------------------------------------------
 
 st.title("🚦 Sistema Integrado de Análisis de Tránsito")
 st.caption(
-    "Método de Webster + Teoría de Colas + Nivel de Servicio"
+    "Método de Webster (1958) · Teoría de Colas M/M/1 · Nivel de Servicio (HCM 2010)"
 )
+st.divider()
 
 
 # ------------------------------------------
@@ -121,267 +148,356 @@ st.caption(
 
 texto_flujos = cargar_flujos_texto()
 escenarios = cargar_escenarios_flujos(texto_flujos)
-
 escenario = {}
 
 if escenarios:
-
     nombres = [e["name"] for e in escenarios]
-
-    seleccion = st.selectbox(
-        "Seleccionar escenario:",
-        nombres
-    )
-
-    escenario = next(
-        e for e in escenarios
-        if e["name"] == seleccion
-    )
+    seleccion = st.selectbox("📂 Seleccionar escenario predefinido:", nombres)
+    escenario = next(e for e in escenarios if e["name"] == seleccion)
+    st.divider()
 
 
 # ------------------------------------------
-# SIDEBAR
+# SIDEBAR — PARÁMETROS DE ENTRADA
 # ------------------------------------------
 
 with st.sidebar:
+    st.header("⚙️ Parámetros de entrada")
+    st.caption("Av. Huancavelica — Huancayo, Perú")
 
-    st.header("⚙ Parámetros de entrada")
+    # ── Flujos vehiculares ──────────────────
+    st.subheader("Flujos por acceso (veh/h)")
+    q_norte = st.number_input("Norte ↑", value=float(escenario.get("q_norte", 450)), min_value=0.0, step=10.0)
+    q_sur   = st.number_input("Sur ↓",   value=float(escenario.get("q_sur",   400)), min_value=0.0, step=10.0)
+    q_este  = st.number_input("Este →",  value=float(escenario.get("q_este",  350)), min_value=0.0, step=10.0)
+    q_oeste = st.number_input("Oeste ←", value=float(escenario.get("q_oeste", 300)), min_value=0.0, step=10.0)
 
-    st.subheader("Flujos")
-
-    q_norte = st.number_input(
-        "Norte",
-        value=float(escenario.get("q_norte", 450))
-    )
-
-    q_sur = st.number_input(
-        "Sur",
-        value=float(escenario.get("q_sur", 400))
-    )
-
-    q_este = st.number_input(
-        "Este",
-        value=float(escenario.get("q_este", 350))
-    )
-
-    q_oeste = st.number_input(
-        "Oeste",
-        value=float(escenario.get("q_oeste", 300))
-    )
-
+    # ── Semaforización ──────────────────────
     st.subheader("Semaforización")
-
     s = st.number_input(
-        "Saturación s (veh/h)",
-        value=float(escenario.get("s", 1800))
+        "Flujo de saturación s (veh/h)",
+        value=float(escenario.get("s", 1800)),
+        min_value=600.0, max_value=2200.0, step=50.0,
+        help="Valor típico HCM: 1800 veh/h por carril."
     )
-
     L = st.number_input(
-        "Tiempo perdido L (s)",
-        value=float(escenario.get("L", 12))
+        "Tiempo perdido por ciclo L (s)",
+        value=float(escenario.get("L", 12)),
+        min_value=0.0, max_value=60.0, step=1.0,
+        help="Estimado como 3 s × n° de fases (4 fases → 12 s)."
     )
 
-    st.subheader("Colas")
-
+    # ── Teoría de colas ─────────────────────
+    st.subheader("Teoría de Colas M/M/1")
     lambda_llegadas = st.number_input(
-        "λ llegadas",
-        value=float(escenario.get("lambda", 300))
+        "λ — Tasa de llegadas (veh/h)",
+        value=float(escenario.get("lambda", 300)),
+        min_value=0.0, step=10.0,
     )
-
     mu_servicio = st.number_input(
-        "μ servicio",
-        value=float(escenario.get("mu", 500))
+        "μ — Tasa de servicio (veh/h)",
+        value=float(escenario.get("mu", 500)),
+        min_value=1.0, step=10.0,
     )
 
+    st.divider()
 
-# ------------------------------------------
-# BOTONES
-# ------------------------------------------
+    # ── Botones de cálculo ──────────────────
+    calc_web = st.button("🚦 Calcular Webster",   use_container_width=True)
+    calc_cola = st.button("🚗 Calcular Cola M/M/1", use_container_width=True)
+    calc_todo = st.button("⚡ Calcular todo",       use_container_width=True, type="primary")
 
-col_btn1, col_btn2 = st.columns(2)
+if calc_web or calc_todo:
+    st.session_state.resultado_webster = calcular_ciclo_webster(
+        q_norte, q_sur, q_este, q_oeste, s=s, L=L
+    )
 
-with col_btn1:
-    if st.button("🚦 Calcular Webster"):
-        st.session_state.resultado_webster = calcular_ciclo_webster(
-            q_norte,
-            q_sur,
-            q_este,
-            q_oeste,
-            s=s,
-            L=L
-        )
-
-with col_btn2:
-    if st.button("🚗 Calcular Cola"):
-        st.session_state.resultado_cola = calcular_cola(
-            lambda_llegadas,
-            mu_servicio
-        )
+if calc_cola or calc_todo:
+    st.session_state.resultado_cola = calcular_cola(lambda_llegadas, mu_servicio)
 
 
 # ------------------------------------------
-# TABS
+# TABS PRINCIPALES
 # ------------------------------------------
 
 tab1, tab2, tab3, tab4 = st.tabs([
     "🚦 Webster",
-    "🚗 Colas",
+    "🚗 Colas M/M/1",
     "📊 Dashboard",
-    "📁 Exportar"
+    "📁 Exportar",
 ])
 
 
 # ==========================================
-# TAB 1 WEBSTER
+# TAB 1 — WEBSTER
 # ==========================================
 
 with tab1:
+    st.subheader("Método de Webster (1958)")
+    st.markdown(
+        "Calcula el ciclo semafórico óptimo distribuyendo el verde efectivo "
+        "proporcional a la relación de flujo por fase."
+    )
 
-    resultado = st.session_state.resultado_webster
+    res_w = st.session_state.resultado_webster
 
-    if resultado and "error" not in resultado:
+    if res_w is None:
+        st.info("Presione **🚦 Calcular Webster** o **⚡ Calcular todo** en la barra lateral.")
+    elif not res_w.es_valido:
+        st.error(f"❌ {res_w.error}")
+    else:
+        # Advertencias
+        for adv in res_w.advertencias:
+            st.warning(adv)
 
-        st.subheader("Resultados del Método de Webster")
+        # KPIs principales
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            kpi_card("Relación crítica Y", f"{res_w.Y:.3f}", color="#f7a44f")
+        with col2:
+            estado_y = "✅ Estable" if res_w.Y < 0.85 else "⚠ Carga alta"
+            kpi_card("Estado de la intersección", estado_y, color="#4fcef7")
+        with col3:
+            kpi_card("Ciclo óptimo C", f"{res_w.C:.1f}", "s", color="#4ff79e")
 
-        c1, c2 = st.columns(2)
+        st.divider()
 
-        with c1:
-            st.metric(
-                "Relación crítica Y",
-                round(resultado["Y"], 3)
-            )
-
-        with c2:
-            st.metric(
-                "Ciclo óptimo",
-                f"{round(resultado['C'],1)} s"
-            )
-
-        st.write("### Verdes efectivos")
-
-        st.dataframe(
-            pd.DataFrame(
-                resultado["verde"].items(),
-                columns=["Acceso", "Verde (s)"]
-            )
+        # Tabla de verdes
+        st.markdown("#### Verdes efectivos por acceso")
+        df_v = pd.DataFrame(
+            [{"Acceso": acc.capitalize(), "Verde efectivo (s)": g,
+              "% del ciclo efectivo": round(g / (res_w.C - L) * 100, 1) if (res_w.C - L) > 0 else 0}
+             for acc, g in res_w.verde.items()]
         )
+        st.dataframe(df_v, use_container_width=True, hide_index=True)
+
+        # Gráfico de barras — verdes
+        fig_v = px.bar(
+            df_v, x="Acceso", y="Verde efectivo (s)",
+            color="Verde efectivo (s)",
+            color_continuous_scale="Teal",
+            title="Distribución de verdes efectivos",
+            labels={"Verde efectivo (s)": "Verde (s)"},
+            text_auto=".1f",
+        )
+        fig_v.update_layout(coloraxis_showscale=False, plot_bgcolor="rgba(0,0,0,0)")
+        st.plotly_chart(fig_v, use_container_width=True)
+
+        # Diagrama de torta del ciclo
+        labels_ciclo = list(res_w.verde.keys()) + ["Tiempo perdido L"]
+        values_ciclo = list(res_w.verde.values()) + [L]
+        fig_pie = go.Figure(data=[go.Pie(
+            labels=[l.capitalize() for l in labels_ciclo],
+            values=values_ciclo,
+            hole=0.4,
+            textinfo="label+percent",
+        )])
+        fig_pie.update_layout(title="Composición del ciclo semafórico")
+        st.plotly_chart(fig_pie, use_container_width=True)
 
 
 # ==========================================
-# TAB 2 COLAS
+# TAB 2 — COLAS M/M/1
 # ==========================================
 
 with tab2:
+    st.subheader("Modelo de Cola M/M/1")
+    st.markdown(
+        "Llegadas Poisson · Servicio exponencial · Un servidor · "
+        "Capacidad infinita (modelo de Kendall: M/M/1/∞)."
+    )
 
-    resultado = st.session_state.resultado_cola
+    res_c = st.session_state.resultado_cola
 
-    if resultado and "error" not in resultado:
+    if res_c is None:
+        st.info("Presione **🚗 Calcular Cola M/M/1** o **⚡ Calcular todo** en la barra lateral.")
+    elif not res_c.es_valido:
+        st.error(f"❌ {res_c.error}")
+    else:
+        for adv in res_c.advertencias:
+            st.warning(adv)
 
-        demora_min = resultado["Wq"] * 60
-        longitud_cola = resultado["Lq"] * 6.5
+        demora_min     = res_c.demora_minutos
+        longitud_m     = res_c.longitud_cola_metros
+        los_resultado  = nivel_servicio_desde_minutos(demora_min)
 
-        c1, c2, c3, c4 = st.columns(4)
+        # KPIs
+        c1, c2, c3, c4, c5 = st.columns(5)
+        with c1: kpi_card("Utilización ρ", f"{res_c.rho:.3f}", color="#f7a44f")
+        with c2: kpi_card("Veh. en cola Lq", f"{res_c.Lq:.2f}", "veh", color="#4fcef7")
+        with c3: kpi_card("Demora Wq", f"{demora_min:.2f}", "min", color="#a44ff7")
+        with c4: kpi_card("Cola estimada", f"{longitud_m:.1f}", "m", color="#f74f4f")
+        with c5: kpi_card("LOS", los_resultado.los, los_resultado.descripcion[:18], color=los_resultado.color_hex)
 
-        c1.metric("ρ", round(resultado["rho"], 3))
-        c2.metric("Lq", round(resultado["Lq"], 2))
-        c3.metric("Demora", f"{demora_min:.2f} min")
-        c4.metric("Cola estimada", f"{longitud_cola:.1f} m")
+        st.divider()
 
-        st.success(
-            f"Nivel de servicio: {nivel_servicio(demora_min)}"
+        # Sensibilidad: variación del ρ
+        st.markdown("#### Análisis de sensibilidad — ρ vs. métricas")
+        rhos    = [i / 100 for i in range(10, 96, 5)]
+        lqs     = [(r**2) / (1 - r) for r in rhos]
+        wqs_min = [(lq / (rhos[i] * mu_servicio)) * 60 for i, lq in enumerate(lqs)]
+
+        df_sens = pd.DataFrame({"ρ": rhos, "Lq (veh)": lqs, "Wq (min)": wqs_min})
+
+        fig_sens = px.line(
+            df_sens, x="ρ", y=["Lq (veh)", "Wq (min)"],
+            title="Comportamiento de la cola ante variaciones de utilización",
+            markers=True,
         )
+        fig_sens.add_vline(
+            x=res_c.rho, line_dash="dash", line_color="red",
+            annotation_text=f"ρ actual = {res_c.rho:.3f}",
+        )
+        fig_sens.update_layout(plot_bgcolor="rgba(0,0,0,0)")
+        st.plotly_chart(fig_sens, use_container_width=True)
 
 
 # ==========================================
-# TAB 3 DASHBOARD
+# TAB 3 — DASHBOARD
 # ==========================================
 
 with tab3:
+    st.subheader("Dashboard de Flujos Vehiculares")
+    st.caption("Av. Huancavelica — Distribución por acceso")
 
-    st.subheader("Dashboard de Flujos")
-
+    # ── Flujos por acceso ───────────────────
     df_flujos = pd.DataFrame({
         "Acceso": ["Norte", "Sur", "Este", "Oeste"],
-        "Flujo": [
-            q_norte,
-            q_sur,
-            q_este,
-            q_oeste
-        ]
+        "Flujo (veh/h)": [q_norte, q_sur, q_este, q_oeste],
+        "v/c": [round(q / s, 3) for q in [q_norte, q_sur, q_este, q_oeste]],
     })
 
-    st.bar_chart(
-        df_flujos.set_index("Acceso")
+    col_a, col_b = st.columns(2)
+
+    with col_a:
+        fig_bar = px.bar(
+            df_flujos, x="Acceso", y="Flujo (veh/h)",
+            color="Acceso",
+            color_discrete_sequence=px.colors.qualitative.Safe,
+            title="Flujo vehicular por acceso",
+            text_auto=True,
+        )
+        fig_bar.update_layout(showlegend=False, plot_bgcolor="rgba(0,0,0,0)")
+        st.plotly_chart(fig_bar, use_container_width=True)
+
+    with col_b:
+        fig_pie2 = px.pie(
+            df_flujos, names="Acceso", values="Flujo (veh/h)",
+            title="Distribución porcentual de flujos",
+            color_discrete_sequence=px.colors.qualitative.Safe,
+            hole=0.35,
+        )
+        st.plotly_chart(fig_pie2, use_container_width=True)
+
+    # ── Relación v/c ────────────────────────
+    st.markdown("#### Relación volumen/capacidad (v/c) por acceso")
+
+    # Colores semafóricos según v/c
+    def color_vc(vc):
+        if vc < 0.60: return "#1a9850"
+        if vc < 0.85: return "#fee08b"
+        return "#d73027"
+
+    df_flujos["Color"] = df_flujos["v/c"].apply(color_vc)
+    fig_vc = px.bar(
+        df_flujos, x="Acceso", y="v/c",
+        color="v/c",
+        color_continuous_scale=["#1a9850", "#fee08b", "#d73027"],
+        range_color=[0, 1],
+        title="Relación v/c por acceso (0 = libre · 1 = capacidad)",
+        text_auto=".3f",
     )
+    fig_vc.add_hline(y=0.85, line_dash="dash", line_color="orange",
+                     annotation_text="Umbral crítico (v/c = 0.85)")
+    fig_vc.add_hline(y=1.00, line_dash="dash", line_color="red",
+                     annotation_text="Capacidad máxima (v/c = 1.00)")
+    fig_vc.update_layout(plot_bgcolor="rgba(0,0,0,0)")
+    st.plotly_chart(fig_vc, use_container_width=True)
 
-    st.subheader("Relación v/c")
-
-    df_vc = pd.DataFrame({
-        "Acceso": ["Norte", "Sur", "Este", "Oeste"],
-        "v/c": [
-            q_norte/s,
-            q_sur/s,
-            q_este/s,
-            q_oeste/s
-        ]
-    })
-
-    st.dataframe(df_vc)
-
-    fig, ax = plt.subplots()
-
-    ax.pie(
-        df_flujos["Flujo"],
-        labels=df_flujos["Acceso"],
-        autopct="%1.1f%%"
-    )
-
-    st.pyplot(fig)
+    st.dataframe(df_flujos[["Acceso", "Flujo (veh/h)", "v/c"]],
+                 use_container_width=True, hide_index=True)
 
 
 # ==========================================
-# TAB 4 EXPORTAR
+# TAB 4 — EXPORTAR
 # ==========================================
 
 with tab4:
+    st.subheader("Exportación de resultados")
 
-    st.subheader("Exportación")
-
-    df_export = pd.DataFrame([
-        {"Campo": "q_norte", "Valor": q_norte},
-        {"Campo": "q_sur", "Valor": q_sur},
-        {"Campo": "q_este", "Valor": q_este},
-        {"Campo": "q_oeste", "Valor": q_oeste},
-        {"Campo": "s", "Valor": s},
-        {"Campo": "L", "Valor": L},
-        {"Campo": "lambda", "Valor": lambda_llegadas},
-        {"Campo": "mu", "Valor": mu_servicio},
+    # ── Parámetros de entrada ───────────────
+    df_params = pd.DataFrame([
+        {"Parámetro": "q Norte (veh/h)",           "Valor": q_norte},
+        {"Parámetro": "q Sur (veh/h)",             "Valor": q_sur},
+        {"Parámetro": "q Este (veh/h)",            "Valor": q_este},
+        {"Parámetro": "q Oeste (veh/h)",           "Valor": q_oeste},
+        {"Parámetro": "s — Saturación (veh/h)",    "Valor": s},
+        {"Parámetro": "L — T. perdido (s)",        "Valor": L},
+        {"Parámetro": "λ — Llegadas (veh/h)",      "Valor": lambda_llegadas},
+        {"Parámetro": "μ — Servicio (veh/h)",      "Valor": mu_servicio},
     ])
 
-    csv_bytes = df_export.to_csv(
-        index=False
-    ).encode("utf-8")
+    # ── Resultados Webster ──────────────────
+    res_w = st.session_state.resultado_webster
+    if res_w and res_w.es_valido:
+        filas_w = [
+            {"Indicador": "Relación crítica Y",    "Valor": res_w.Y},
+            {"Indicador": "Ciclo óptimo C (s)",    "Valor": res_w.C},
+        ]
+        for acc, g in res_w.verde.items():
+            filas_w.append({"Indicador": f"Verde {acc.capitalize()} (s)", "Valor": g})
+        df_webster = pd.DataFrame(filas_w)
+    else:
+        df_webster = pd.DataFrame(columns=["Indicador", "Valor"])
 
-    st.download_button(
-        "Descargar CSV",
-        csv_bytes,
-        file_name="escenario_transito.csv"
-    )
+    # ── Resultados Cola ─────────────────────
+    res_c = st.session_state.resultado_cola
+    if res_c and res_c.es_valido:
+        los_r = nivel_servicio_desde_minutos(res_c.demora_minutos)
+        df_cola = pd.DataFrame([
+            {"Indicador": "Utilización ρ",          "Valor": res_c.rho},
+            {"Indicador": "Veh. en cola Lq",        "Valor": res_c.Lq},
+            {"Indicador": "Demora Wq (min)",         "Valor": round(res_c.demora_minutos, 3)},
+            {"Indicador": "Cola estimada (m)",       "Valor": round(res_c.longitud_cola_metros, 1)},
+            {"Indicador": "Nivel de Servicio (LOS)", "Valor": los_r.los},
+        ])
+    else:
+        df_cola = pd.DataFrame(columns=["Indicador", "Valor"])
 
-    output = BytesIO()
+    # ── Vista previa ────────────────────────
+    st.markdown("**Vista previa — Parámetros de entrada**")
+    st.dataframe(df_params, use_container_width=True, hide_index=True)
 
-    with pd.ExcelWriter(
-        output,
-        engine="openpyxl"
-    ) as writer:
+    col_exp1, col_exp2 = st.columns(2)
 
-        df_export.to_excel(
-            writer,
-            index=False
+    # Exportar CSV
+    with col_exp1:
+        csv_bytes = df_params.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "⬇️ Descargar CSV (parámetros)",
+            csv_bytes,
+            file_name="transito_parametros.csv",
+            mime="text/csv",
+            use_container_width=True,
         )
 
-    st.download_button(
-        "Descargar Excel",
-        output.getvalue(),
-        file_name="escenario_transito.xlsx"
+    # Exportar Excel multi-hoja
+    with col_exp2:
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df_params.to_excel(writer,   sheet_name="Parámetros", index=False)
+            df_webster.to_excel(writer,  sheet_name="Webster",    index=False)
+            df_cola.to_excel(writer,     sheet_name="Colas",      index=False)
+
+        st.download_button(
+            "⬇️ Descargar Excel (multisheet)",
+            output.getvalue(),
+            file_name="transito_resultados.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+
+    st.info(
+        "El archivo Excel contiene tres hojas: **Parámetros**, **Webster** y **Colas**. "
+        "Asegúrese de ejecutar ambos cálculos antes de exportar."
     )

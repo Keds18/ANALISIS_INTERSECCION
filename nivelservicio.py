@@ -20,13 +20,13 @@ class ResultadoLOS:
 
 
 # Tabla LOS para intersecciones semaforizadas según HCM 2010 (Tabla 18-4)
-# Umbrales en minutos (control delay per vehicle)
+# Umbrales de demora de control por vehículo en segundos, convertidos a horas.
 _TABLA_LOS = [
-    ("A", 10/60,  "Demora muy baja. Operación libre.",                    "#1a9850"),
-    ("B", 20/60,  "Demora baja. Conductores no perciben restricciones.",  "#91cf60"),
-    ("C", 35/60,  "Demora moderada. Colas cortas.",                       "#d9ef8b"),
-    ("D", 55/60,  "Demora notable. Colas significativas.",                "#fee08b"),
-    ("E", 80/60,  "Demora alta. Operación cercana a capacidad.",          "#fc8d59"),
+    ("A", 10/3600,  "Demora muy baja. Operación libre.",                    "#1a9850"),
+    ("B", 20/3600,  "Demora baja. Conductores no perciben restricciones.",  "#91cf60"),
+    ("C", 35/3600,  "Demora moderada. Colas cortas.",                       "#d9ef8b"),
+    ("D", 55/3600,  "Demora notable. Colas significativas.",                "#fee08b"),
+    ("E", 80/3600,  "Demora alta. Operación cercana a capacidad.",          "#fc8d59"),
 ]
 _LOS_F_COLOR = "#d73027"
 

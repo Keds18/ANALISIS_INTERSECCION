@@ -52,26 +52,43 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
-# CSS mínimo para KPI cards
+# CSS personalizado para tarjetas KPI
 st.markdown(
     """
     <style>
     .kpi-card {
         background: #1e2130;
-        border-radius: 10px;
-        padding: 1rem 1.2rem;
-        margin-bottom: 0.5rem;
-        border-left: 4px solid #4f8ef7;
+        border-radius: 14px;
+        padding: 1.35rem 1.5rem;
+        margin-bottom: 0.8rem;
+        border-left: 5px solid #4f8ef7;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.18);
     }
-    .kpi-label { color: #aab0c2; font-size: 0.78rem; text-transform: uppercase; letter-spacing: .06em; }
-    .kpi-value { color: #e8ecf4; font-size: 1.6rem; font-weight: 700; }
-    .kpi-unit  { color: #7b82a0; font-size: 0.78rem; margin-left: 4px; }
+
+    .kpi-label {
+        color: #aab0c2;
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin-bottom: 0.35rem;
+    }
+
+    .kpi-value {
+        color: #ffffff;
+        font-size: 2.0rem;
+        font-weight: 700;
+        line-height: 1.15;
+    }
+
+    .kpi-unit {
+        color: #8e95b3;
+        font-size: 0.95rem;
+        margin-left: 6px;
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
-
 
 # ------------------------------------------
 # FUNCIONES AUXILIARES
@@ -259,7 +276,7 @@ with tab1:
         fig_pie = go.Figure(data=[go.Pie(
             labels=[l.capitalize() for l in labels_ciclo],
             values=values_ciclo,
-            hole=0.8,
+            hole=0.6,
             textinfo="label+percent",
         )])
         fig_pie.update_layout(title="Composición del ciclo semafórico")
@@ -272,11 +289,11 @@ with tab1:
 
 with tab2:
     st.subheader("Modelo de Cola M/M/1")
-    st.markdown(
-        "Llegadas Poisson · Servicio exponencial · Un servidor · "
-        "Capacidad infinita (modelo de Kendall: M/M/1/∞)."
+    st.caption(
+        "Llegadas Poisson · Servicio exponencial · 1 servidor · "
+        "cola teórica no limitada (Kendall: M/M/1/∞)"
     )
-
+    
     res_c = st.session_state.resultado_cola
 
     if res_c is None:
@@ -471,3 +488,12 @@ with tab4:
         "El archivo Excel contiene tres hojas: **Parámetros**, **Webster** y **Colas**. "
         "Asegúrese de ejecutar ambos cálculos antes de exportar."
     )
+    
+st.markdown("""
+<hr>
+<div style='background-color:  #e5e7eb; padding: 20px; text-align: center; font-size: 0.9em; color: #333333; border-radius: 8px;'>
+    <p>© 2025 <strong>Transit | Kevin Galindo Antezana</strong> | All rights reserved, please reference.</p>
+    <p>📧 Contact: <a href="mailto:keds1810@gmail.com" style='color: #1a73e8;'>keds1810@gmail.com</a></p>
+    <p>🔧 Developed with Python + Streamlit + HTML</p>
+</div>
+""", unsafe_allow_html=True)

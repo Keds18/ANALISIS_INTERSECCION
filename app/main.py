@@ -16,6 +16,7 @@
 import csv
 import io
 import importlib.util
+import sys
 from io import BytesIO
 from pathlib import Path
 
@@ -25,14 +26,8 @@ import plotly.graph_objects as go
 import streamlit as st
 
 # Asegurar que la carpeta raíz del proyecto esté en sys.path.
-# Esto permite importar módulos locales (por ejemplo `colas.py`) cuando
-# `app/main.py` se ejecuta desde la subcarpeta `app/`.
-import sys
-from pathlib import Path
-
-# Agregar raíz del proyecto al path
+# Esto permite importar el paquete `core` cuando (streamlit) ejecuta `app/main.py`.
 _proj_root = Path(__file__).resolve().parent.parent
-
 if str(_proj_root) not in sys.path:
     sys.path.insert(0, str(_proj_root))
 

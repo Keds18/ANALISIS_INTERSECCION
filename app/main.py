@@ -199,27 +199,27 @@ with st.sidebar:
     # ── Semaforización ──────────────────────
     st.subheader("Semaforización")
     s = st.number_input(
-        "Flujo de saturación s (veh/h)",
+        "Flujo de saturación S (veh/h)",
         value=float(escenario.get("s", 1800)),
         min_value=500.0, max_value=2400.0, step=50.0,
         help="Valor típico HCM: 1800 veh/h por carril."
     )
     L = st.number_input(
         "Tiempo perdido por ciclo L (s)",
-        value=float(escenario.get("L", 12)),
+        value=float(escenario.get("L", 8)),
         min_value=0.0, max_value=60.0, step=1.0,
-        help="Estimado como 3 s × n° de fases (4 fases → 12 s)."
+        help="Estimado como 4s(3s(ambar)+1s(rojo)) × n° de fases (2 fases → 8s)."
     )
 
     # ── Teoría de colas ─────────────────────
     st.subheader("Teoría de Colas M/M/1")
     lambda_llegadas = st.number_input(
-        "λ — Tasa de llegadas (veh/h)",
+        "λ — Tasa de llegadas (veh/h)  = flujos",
         value=float(escenario.get("lambda", 300)),
         min_value=0.0, step=10.0,
     )
     mu_servicio = st.number_input(
-        "μ — Tasa de servicio (veh/h)",
+        "μ — Tasa de servicio (veh/h) = Q(v.S/C)",
         value=float(escenario.get("mu", 800)),
         min_value=1.0, step=10.0,
     )
@@ -288,9 +288,14 @@ with tab1:
 
         # Tabla de verdes
         st.markdown("#### Verdes efectivos por acceso")
+        ciclo_optimo = obtener_atributo(res_w, 'C', 0)
         df_v = pd.DataFrame(
-            [{"Acceso": acc.capitalize(), "Verde efectivo (s)": g,
-              "% del ciclo efectivo": round(g / (obtener_atributo(res_w, 'C', 0) - L) * 100, 1) if (obtener_atributo(res_w, 'C', 0) - L) > 0 else 0}
+            [{
+                "Acceso": acc.capitalize(),
+                "Verde efectivo (s)": g,
+                "% del ciclo efectivo": round(g / (ciclo_optimo - L) * 100, 1) if (ciclo_optimo - L) > 0 else 0,
+                "Capacidad teórica Q (veh/h)": round(g * s / ciclo_optimo, 1) if ciclo_optimo > 0 else 0,
+            }
              for acc, g in obtener_atributo(res_w, 'verde', {}).items()]
         )
         st.dataframe(df_v, use_container_width=True, hide_index=True)
@@ -313,7 +318,7 @@ with tab1:
         fig_pie = go.Figure(data=[go.Pie(
             labels=[l.capitalize() for l in labels_ciclo],
             values=values_ciclo,
-            hole=0.4,
+            hole=0.8,
             textinfo="label+percent",
         )])
         fig_pie.update_layout(title="Composición del ciclo semafórico")

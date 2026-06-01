@@ -1,6 +1,6 @@
 # ============================================
 # TEORIA DE COLAS M/M/1
-# Modelo de cola para intersecciones
+# Modelo de cola para intersecciones semaforizadas con un solo acceso
 # Versión mejorada con validaciones y métricas
 # ============================================
 

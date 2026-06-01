@@ -30,6 +30,8 @@ secrets.toml
 .DS_Store
 Thumbbs.db
 
+# Carpetas de trabajo
+flujos_trabajo/
 
 # Build / dist
 dist/

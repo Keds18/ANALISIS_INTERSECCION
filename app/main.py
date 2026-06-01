@@ -1,7 +1,7 @@
 # ==========================================
 # TRANSITO v3 — Dashboard de Análisis
-# Operacional de Intersecciones
-# Av. Huancavelica — Huancayo, Perú
+# Operacional de Intersecciones con 1 acceso
+# Huancayo, Perú
 #
 # Mejoras v3:
 # · Módulos tipados con dataclasses
@@ -24,7 +24,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from colas import calcular_cola
+from core.colas import calcular_cola
 from webster import calcular_ciclo_webster
 
 # Cargar el módulo local nivelservicio.py desde la misma carpeta que este script.

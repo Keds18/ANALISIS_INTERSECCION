@@ -10,7 +10,7 @@ Este proyecto ofrece un panel interactivo desarrollado en **Streamlit** para cal
 
 - 🚥 **Método de Webster (1958)** para diseño del ciclo semafórico óptimo.
 - 🚗 **Modelo de colas M/M/1** para estimación de retrasos y longitud de filas.
-- 📊 **Nivel de Servicio (LOS)** según metodología **HCM 2010**.
+- 📊 **Nivel de Servicio (LOS)** según metodología **HCM**.
 
 La aplicación permite ingresar flujos vehiculares por acceso, parámetros de semaforización y evaluar indicadores clave de desempeño operacional.
 
